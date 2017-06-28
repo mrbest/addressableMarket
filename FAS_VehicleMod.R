@@ -15,7 +15,7 @@ main <- function()
 
 
 load_files <- function()
-{
+{##future dev note: file loading phase can be speeded up by using spark csv reader
   options(scipen = 999)
   #Read in file
   df <- read_csv("GWCM_FPDS_01_MAY_EXTRACT.csv")
@@ -39,7 +39,10 @@ generate_vehicle_df_list <- function(contract_inventory, transaction_df)
   for(i in 1:nrow(unique_gsa_vehicleNames))
   {
    current_vehicle_ref_piids <- contract_inventory %>% filter(contract_name %in% unique_gsa_vehicleNames[i, 1]) %>% select(unique_contract_id)
+   ##data management recommendation: change unique_contract_id to reference_piid or add new column called reference_piid with same values CONSISTENCY!
    current_vehicle_df <- transaction_df %>% filter(reference_piid %in% current_vehicle_ref_piids$unique_contract_id) 
+   ##here it may be useful to know of any contract vehicles that do not yield transactions to prevent empty data frames upstream 
+   
    if(nrow(current_vehicle_df) >0 & is.null(nrow(current_vehicle_df)) == FALSE)
      {vehicle_df_list[[i]] <- current_vehicle_df}   
   }
@@ -47,13 +50,6 @@ generate_vehicle_df_list <- function(contract_inventory, transaction_df)
   vehicle_df_list
 }
 
-produce_vehicle_market <- function(transaction_df, psc_naics_combos)
-{
-  #create dataframe for this vehicles market and remove this vehicles transactions from it 
-  
-  #vehicle_market_df <- transaction_df %>% filter(product_or_service_code %in% psc_naics_combos$product_orservice_code & naics_code %in% psc_naics_combos$)
-  
-}
 
 produce_psc_naics_proportions <- function(contract_vehicle_list, contract_inventory)
 {
@@ -61,10 +57,7 @@ produce_psc_naics_proportions <- function(contract_vehicle_list, contract_invent
   vehicle_list_count <- length(contract_vehicle_list)
   for(i in 1:vehicle_list_count) #loop through vehicles
   {  
-    #if(i==31)
-    #{
-    #  print(i)
-    #}
+    
   contract_vehicle_df <- contract_vehicle_list[[i]] 
   contract_vehicle_df_count <- nrow(contract_vehicle_df)
   if(is.null(contract_vehicle_df_count) == FALSE)
@@ -94,6 +87,7 @@ produce_psc_naics_combos <- function(contract_vehicle_df, contract_inventory)
 
   psc_naics_combo_sum_vector <- numeric()
   psc_naics_combo_proportion <- numeric()
+  #get the vehicle name
   psc_naics_combo_contract_vehicle <- contract_inventory %>% filter(unique_contract_id %in% contract_vehicle_df$reference_piid) %>% select(contract_name) %>% distinct() %>% .$contract_name
   for(j in 1:nrow(psc_naics_combos)) #loop through psc_naics combos
   {
