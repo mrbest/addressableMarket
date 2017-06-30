@@ -40,7 +40,11 @@ generate_vehicle_df_list <- function(contract_inventory, transaction_df)
   {
    current_vehicle_ref_piids <- contract_inventory %>% filter(contract_name %in% unique_gsa_vehicleNames[i, 1]) %>% select(unique_contract_id)
    ##data management recommendation: change unique_contract_id to reference_piid or add new column called reference_piid with same values CONSISTENCY!
-   current_vehicle_df <- transaction_df %>% filter(reference_piid %in% current_vehicle_ref_piids$unique_contract_id) 
+   
+   
+   current_vehicle_df <- transaction_df %>% filter(unique_contract_id %in% current_vehicle_ref_piids$unique_contract_id) 
+   #####filtering by reference_piid could be the source of difference
+   
    ##here it may be useful to know of any contract vehicles that do not yield transactions to prevent empty data frames upstream 
    
    if(nrow(current_vehicle_df) >0 & is.null(nrow(current_vehicle_df)) == FALSE)
@@ -127,6 +131,7 @@ produce_psc_naics_market <- function(vehicle_psc_naics_combo_df, contract_invent
   #get the market
   vehicle_market <- transaction_df %>% filter(psc_naics_combo %in% vehicle_psc_naics_combo_df$psc_naics_combo) 
   
+  #remove transactions from the source vehicle
   vehicle_market <- vehicle_market %>% filter(!reference_piid %in% contract_vehicle_ref_piids )
   vehicle_market
   
