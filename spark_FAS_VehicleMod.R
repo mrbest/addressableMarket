@@ -1,6 +1,6 @@
 require(readr)
 require(dplyr)
-
+require(sparklyr)
 
 main <- function()
 {
@@ -12,18 +12,45 @@ main <- function()
   write_csv(market_df, "market_df.csv")
 }
 
+sparkInit <- function()
+{
+  Sys.setenv("SPARK_MEM" = "30G")
+  config <- spark_config()
+  config$spark.driver.maxResultSize <- "4G"
+  config$spark.driver.memory <- "2G"
+  config$spark.executor.memory <- "2G"
+  sc <- spark_connect(master = "local", config = config)
+  sc
+}
 
+sparkLocalRemoteInit <- function()
+{
+  Sys.setenv("SPARK_HOME" = "/Users/destiny/Documents/development/spark-2.1.1-bin-hadoop2.7") 
+  Sys.setenv("SPARK_MEM" = "30G")
+  config <- spark_config()
+  config$spark.driver.maxResultSize <- "4G"
+  config$spark.driver.memory <- "2G"
+  config$spark.executor.memory <- "2G"
+  config$spark.rpc.message.maxSize <- "1000"
+  sc <- spark_connect(master = "spark://Event-Horizon.local:7077", config = config)
+  #sc <- spark_connect(master = "spark://127.0.0.1:7077", config = config)
+  sc 
+}
+
+#sparkdf <- spark_read_csv(sc, name = "sprkdf", paste0("file://","/Users/destiny/Documents/development/addressableMarket/GWCM_FPDS_01_MAY_EXTRACT.csv"),delimiter = ",", header = TRUE, overwrite = TRUE)
 
 load_files <- function()
 {##future dev note: file loading phase can be speeded up by using spark csv reader
   options(scipen = 999)
   #Read in file
-  df <- read_csv("GWCM_FPDS_01_MAY_EXTRACT.csv")
+  #df <- read_csv("GWCM_FPDS_01_MAY_EXTRACT.csv")
+  df <- spark_read_csv(sc, name = "sprkdf", paste0("file://","/Users/destiny/Documents/development/addressableMarket/GWCM_FPDS_01_MAY_EXTRACT.csv"),delimiter = ",", header = TRUE, overwrite = TRUE)
   #filter by date range to only have FY16
   transactions <- df %>% filter(as.Date(date_signed) >= as.Date("2015-10-01") & as.Date(date_signed) <= as.Date("2016-09-30"))
   transactions <<- transactions %>% mutate(psc_naics_combo =paste0(product_or_service_code, "_", naics_code))
   #clear up RAM
-  gc()
+  #gc()
+  
   Contract_Inventory <<- read_csv("2017_06_20_Contract_Inventory_All_Fields.csv")
 }
 
@@ -38,17 +65,18 @@ generate_vehicle_df_list <- function(contract_inventory, transaction_df)
   #create dataframe for each vehicle and append to list
   for(i in 1:nrow(unique_gsa_vehicleNames))
   {
-    current_vehicle_ref_piids <- contract_inventory %>% filter(contract_name %in% unique_gsa_vehicleNames[i, 1]) %>% select(unique_contract_id)
-    ##data management recommendation: change unique_contract_id to reference_piid or add new column called reference_piid with same values CONSISTENCY!
-    
-    
-    current_vehicle_df <- transaction_df %>% filter(unique_contract_id %in% current_vehicle_ref_piids$unique_contract_id) 
-    #####filtering by reference_piid could be the source of difference
-    
-    ##here it may be useful to know of any contract vehicles that do not yield transactions to prevent empty data frames upstream 
-    
-    if(nrow(current_vehicle_df) >0 & is.null(nrow(current_vehicle_df)) == FALSE)
-    {vehicle_df_list[[i]] <- current_vehicle_df}   
+   current_vehicle_ref_piids <- contract_inventory %>% filter(contract_name %in% unique_gsa_vehicleNames[i, 1]) %>% select(unique_contract_id)
+   ##data management recommendation: change unique_contract_id to reference_piid or add new column called reference_piid with same values CONSISTENCY!
+   
+   
+   current_vehicle_df <- collect(transaction_df %>% filter(unique_contract_id %in% current_vehicle_ref_piids$unique_contract_id) )
+   print(paste0("Collecting df for contract vehicle ", i ))
+   #####filtering by reference_piid could be the source of difference
+   
+   ##here it may be useful to know of any contract vehicles that do not yield transactions to prevent empty data frames upstream 
+   
+   if(nrow(current_vehicle_df) >0 & is.null(nrow(current_vehicle_df)) == FALSE)
+     {vehicle_df_list[[i]] <- current_vehicle_df}   
   }
   #return list of vehicle data frames
   vehicle_df_list
@@ -62,19 +90,19 @@ produce_psc_naics_proportions <- function(contract_vehicle_list, contract_invent
   for(i in 1:vehicle_list_count) #loop through vehicles
   {  
     
-    contract_vehicle_df <- contract_vehicle_list[[i]] 
-    contract_vehicle_df_count <- nrow(contract_vehicle_df)
-    if(is.null(contract_vehicle_df_count) == FALSE)
-    {
-      contract_vehicle_psc_naics_combos <- produce_psc_naics_combos(contract_vehicle_df, contract_inventory) 
-      psc_naics_proportions_list[[i]] <- contract_vehicle_psc_naics_combos
-    } 
-    else
-    {#write empty table to  
-      psc_naics_proportions_list[[i]] <- data.frame(product_or_service_code = NA, naics_code = NA, dollars_obligated = 0, vehicle_proportion = 0, contract_name = "None") 
-    }  
-    
-    
+  contract_vehicle_df <- contract_vehicle_list[[i]] 
+  contract_vehicle_df_count <- nrow(contract_vehicle_df)
+  if(is.null(contract_vehicle_df_count) == FALSE)
+  {
+    contract_vehicle_psc_naics_combos <- produce_psc_naics_combos(contract_vehicle_df, contract_inventory) 
+    psc_naics_proportions_list[[i]] <- contract_vehicle_psc_naics_combos
+  } 
+  else
+  {#write empty table to  
+    psc_naics_proportions_list[[i]] <- data.frame(product_or_service_code = NA, naics_code = NA, dollars_obligated = 0, vehicle_proportion = 0, contract_name = "None") 
+  }  
+  
+  
   }##end of vehicle list loop
   psc_naics_proportions_list
 }
@@ -88,7 +116,7 @@ produce_psc_naics_combos <- function(contract_vehicle_df, contract_inventory)
     select(product_or_service_code, naics_code) %>% 
     distinct(product_or_service_code, naics_code)
   #loop: calculate each combo's percentage of the whole vehicle 
-  
+
   psc_naics_combo_sum_vector <- numeric()
   psc_naics_combo_proportion <- numeric()
   #get the vehicle name
@@ -150,7 +178,7 @@ generate_vehicle_market_list <- function(psc_naics_proportions_list, contract_in
     current_vehicle_market_df$contract_perspective <- rep(current_vehicle_name, nrow(current_vehicle_market_df))
     vehicle_market_list[[i]] <- current_vehicle_market_df
   }
-  vehicle_market_list  
+vehicle_market_list  
 }
 
 assemble_market_df <- function(vehicle_market_list)
@@ -161,6 +189,6 @@ assemble_market_df <- function(vehicle_market_list)
   {
     market_df <- rbind(market_df, vehicle_market_list[[i]])
   }  
-  
-  market_df 
+ 
+ market_df 
 }
